@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use structopt::StructOpt;
+use regex::Regex;
 
 #[derive(StructOpt)]
 struct Cli {
@@ -18,11 +19,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Cli::from_args();
     let content = std::fs::read_to_string(&args.path)?;
     let mut word_counts = HashMap::new();
+    let re = Regex::new(r"\b[\p{L}']+\b").unwrap();
 
     for line in content.lines() {
-        let tokens = line.split_whitespace();
-        for token in tokens {
-            *word_counts.entry(token).or_insert(0) += 1;
+        for mat in re.find_iter(line) {
+            let word = &line[mat.start()..mat.end()];
+            *word_counts.entry(word).or_insert(0) += 1;
         }
     }
 
@@ -35,4 +37,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn word_count() {
+        assert_eq!(1, 2);
+    }
 }
