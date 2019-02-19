@@ -13,5 +13,5 @@ lazy_static = "1.2.0"
 criterion = "0.2"
 
 [[bench]]
-name = "bench_count_words"
+name = "benchmarks"
 harness = false

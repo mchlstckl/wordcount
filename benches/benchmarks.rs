@@ -1,3 +1,6 @@
+// cargo bench --bench benchmarks -- --save-baseline master
+// cargo bench --bench benchmarks -- --baseline master
+
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use wordcount;
