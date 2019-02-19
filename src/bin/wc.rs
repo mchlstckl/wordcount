@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let args = Cli::from_args();
 
-    let counts = wordcount::count_words(&args.path).unwrap();
+    let counts = wordcount::count_words(&args.path)?;
 
     // https://rust-lang-nursery.github.io/cli-wg/tutorial/output.html
     for (word, count) in counts {
