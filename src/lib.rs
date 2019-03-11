@@ -1,3 +1,11 @@
+// enable the await! macro, async support, and the new std::Futures api.
+#![feature(await_macro, async_await, futures_api)]
+// only needed to manually implement a std future:
+#![feature(arbitrary_self_types)]
+
+
+
+use futures::{future, stream, Stream};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use rayon::prelude::*;
@@ -5,13 +13,12 @@ use regex::Regex;
 use std::error::Error;
 use std::path::Path;
 use std::str;
-use tokio;
-use tokio::prelude::{AsyncRead, Future};
-use walkdir::{DirEntry, WalkDir};
-use futures::{stream, Stream, lazy, future};
+use tokio::prelude::*;
 
-type CountTuples = Vec<(String, u32)>;
+use walkdir::{DirEntry, WalkDir};
+
 type GenericError = Box<dyn Error>;
+type CountTuples = Vec<(String, u32)>;
 type CountResult = Result<CountTuples, GenericError>;
 
 lazy_static! {
@@ -26,6 +33,26 @@ fn get_dir_entries(path: impl AsRef<Path>) -> Vec<DirEntry> {
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .collect()
+}
+
+pub fn count_words_async(path: impl AsRef<Path>) {
+
+    let dir_entries = get_dir_entries(path);
+
+    // Note type information ::<_,()>
+    let mut dir_stream = stream::iter_ok::<_,()>(dir_entries);
+
+    let run = async move {
+        while let Some(Ok(entry)) = await!(dir_stream.next()) {
+
+            let data = await!(tokio::fs::read(entry.path().to_owned()));
+            if let Ok(content) = str::from_utf8(&data) {
+                println!("content {:?}", content);
+            }
+        }
+    };
+
+    tokio::run_async(run);
 }
 
 pub fn count_words_tokio(path: impl AsRef<Path>) {
@@ -52,7 +79,7 @@ pub fn count_words_tokio(path: impl AsRef<Path>) {
                 println!("{:5} {}", count, word);
             }
         });
-        
+
     tokio::run(f);
 }
 

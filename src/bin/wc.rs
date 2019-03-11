@@ -28,6 +28,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("Running par_chunks variant");
             wordcount::count_words_par_chunks(&args.path)?
         }
+        "async" => {
+            println!("Running tokio variant");
+            wordcount::count_words_async(&args.path);
+            vec![("empty".to_owned(), 0)]
+        }
         "tokio" => {
             println!("Running tokio variant");
             wordcount::count_words_tokio(&args.path);
