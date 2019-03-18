@@ -1,20 +1,12 @@
-// enable the await! macro, async support, and the new std::Futures api.
-#![feature(await_macro, async_await, futures_api)]
-// only needed to manually implement a std future:
-#![feature(arbitrary_self_types)]
-
-
-
+use crossbeam_queue::SegQueue;
+use crossbeam_utils::thread::scope;
 use futures::{future, stream, Stream};
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
 use rayon::prelude::*;
 use regex::Regex;
-use std::error::Error;
-use std::path::Path;
-use std::str;
+use std::{error::Error, path::Path, str};
 use tokio::prelude::*;
-
 use walkdir::{DirEntry, WalkDir};
 
 type GenericError = Box<dyn Error>;
@@ -35,24 +27,118 @@ fn get_dir_entries(path: impl AsRef<Path>) -> Vec<DirEntry> {
         .collect()
 }
 
-pub fn count_words_async(path: impl AsRef<Path>) {
+pub fn count_words_queue(path: impl AsRef<Path>) -> CountResult {
+    let out_q = SegQueue::new();
+    let in_q: SegQueue<walkdir::DirEntry> = SegQueue::new();
 
-    let dir_entries = get_dir_entries(path);
+    WalkDir::new(path)
+        .follow_links(true)
+        .contents_first(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .for_each(|e| in_q.push(e));
 
-    // Note type information ::<_,()>
-    let mut dir_stream = stream::iter_ok::<_,()>(dir_entries);
-
-    let run = async move {
-        while let Some(Ok(entry)) = await!(dir_stream.next()) {
-
-            let data = await!(tokio::fs::read(entry.path().to_owned()));
-            if let Ok(content) = str::from_utf8(&data) {
-                println!("content {:?}", content);
-            }
+    scope(|scope| {
+        //
+        for _ in 0..num_cpus::get() {
+            scope.spawn(|_| {
+                let mut counts = HashMap::new();
+                loop {
+                    if let Ok(entry) = in_q.pop() {
+                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                            for mat in RE.find_iter(&content) {
+                                let word = &content[mat.start()..mat.end()];
+                                let count = counts.entry(word.to_owned()).or_insert(0u32);
+                                *count += 1;
+                            }
+                        }
+                    } else {
+                        out_q.push(counts);
+                        break;
+                    }
+                }
+            });
         }
-    };
+    })
+    .unwrap();
 
-    tokio::run_async(run);
+    let mut r = HashMap::new();
+    while let Ok(counts) = out_q.pop() {
+        for (word, count) in counts {
+            let entry = r.entry(word.to_owned()).or_insert(0u32);
+            *entry += count
+        }
+    }
+
+    let mut count_vec: Vec<_> = r.into_iter().collect();
+    count_vec.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+
+    Ok(count_vec)
+}
+
+pub fn count_words_channel(path: impl AsRef<Path>) -> CountResult {
+    
+    let (s_dir, r_dir) = crossbeam_channel::unbounded::<walkdir::DirEntry>();
+
+    WalkDir::new(path)
+        .follow_links(true)
+        .contents_first(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .for_each(|e| s_dir.send(e).unwrap());
+
+    let (s_cnt, r_cnt) = crossbeam_channel::unbounded();
+
+    scope(|scope| {
+        //
+        for _ in 0..num_cpus::get() {
+            scope.spawn({
+                let sx = s_cnt.clone();
+                |_| {
+                    let mut counts = HashMap::new();
+                    while !r_dir.is_empty() {
+                        let entry = r_dir.recv().unwrap();
+                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                            for mat in RE.find_iter(&content) {
+                                let word = &content[mat.start()..mat.end()];
+                                let count = counts.entry(word.to_owned()).or_insert(0u32);
+                                *count += 1;
+                            }
+                        }
+                    }
+                    sx.send(counts).unwrap();
+                    drop(sx);
+                }
+            });
+        }
+
+        // scope.spawn(|_| {
+        //     WalkDir::new(p)
+        //         .follow_links(true)
+        //         .contents_first(true)
+        //         .into_iter()
+        //         .filter_map(|e| e.ok())
+        //         .filter(|e| e.file_type().is_file())
+        //         .for_each(|e| s_dir.send(e).unwrap());
+        // })
+    })
+    .unwrap();
+
+    let mut r = HashMap::new();
+    while !r_cnt.is_empty() {
+        let counts = r_cnt.recv().unwrap();
+        for (word, count) in counts {
+            let entry = r.entry(word.to_owned()).or_insert(0u32);
+            *entry += count
+        }
+    }
+
+    let mut count_vec: Vec<_> = r.into_iter().collect();
+    count_vec.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+
+    Ok(count_vec)
 }
 
 pub fn count_words_tokio(path: impl AsRef<Path>) {
