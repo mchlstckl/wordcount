@@ -139,7 +139,17 @@ pub fn count_words_tokio(path: impl AsRef<Path>) {
 
     let f = stream::iter_ok(dir_entries)
         .map(|entry| entry.path().to_owned())
-        .and_then(tokio::fs::read)
+        // Is slower or equal to "single"
+        // .and_then(tokio::fs::read)
+        // Is faster than "single"
+        .and_then(tokio::fs::File::open)
+        .map(|mut file| {
+            let mut data = vec![];
+            file.read_buf(&mut data)
+                .map_err(|e| eprintln!("IO error: {:?}", e))
+                .unwrap();
+            data
+        })
         .map_err(|e| eprintln!("IO error: {:?}", e))
         .fold(HashMap::new(), |mut counts, data| {
             if let Ok(content) = str::from_utf8(&data) {
@@ -154,8 +164,10 @@ pub fn count_words_tokio(path: impl AsRef<Path>) {
         .map(|counts| {
             let mut count_vec: Vec<_> = counts.into_iter().collect();
             count_vec.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+            let out = std::io::stdout();
+            let mut h = out.lock();
             for (word, count) in count_vec {
-                println!("{:5} {}", count, word);
+                writeln!(h, "{:5} {}", count, word).unwrap();
             }
         });
 
